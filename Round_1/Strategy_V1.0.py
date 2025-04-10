@@ -1,80 +1,82 @@
 from datamodel import OrderDepth, UserId, TradingState, Order
 from typing import List, Dict
 import math
-import jsonpickle # Add import for jsonpickle if needed for traderData serialization later
 
 class Trader:
 
-    POSITION_LIMIT = {'AMETHYSTS': 20, 'STARFRUIT': 20}
-    SPREAD = {'AMETHYSTS': 2, 'STARFRUIT': 4} # Wider spread for more volatile Starfruit
+    # Updated position limits and spreads for Round 1 products
+    POSITION_LIMIT = {
+        'RAINFOREST_RESIN': 50,
+        'KELP': 50,
+        'SQUID_INK': 50
+    }
+    SPREAD = {
+        'RAINFOREST_RESIN': 2,  # Tight spread for stable product
+        'KELP': 5,              # Wider spread for volatile product
+        'SQUID_INK': 4          # Moderate spread for swings with potential pattern
+    }
 
     def run(self, state: TradingState) -> (Dict[str, List[Order]], int, str):
         """
-        Implements a market-making strategy based on calculating a fair value using WAP,
-        applying spreads, and managing inventory within position limits.
+        Market-making strategy with WAP-based fair value, product-specific spreads,
+        and position limit management for Round 1 products.
         """
         print("traderData: " + state.traderData)
         print("Observations: " + str(state.observations))
 
         result = {}
-        conversions = 0 # No conversions needed for this basic strategy
-        traderData = "" # No state data needed for this basic strategy yet
+        conversions = 0
+        traderData = ""
 
         for product in state.order_depths:
             order_depth: OrderDepth = state.order_depths[product]
             orders: List[Order] = []
             position_limit = self.POSITION_LIMIT.get(product, 0)
-            spread = self.SPREAD.get(product, 2) # Default spread if product not in dict
+            spread = self.SPREAD.get(product, 2)  # Default to 2 if product not recognized
 
-            # Calculate fair value using Weighted Average Price (WAP)
+            # Calculate fair value using WAP
             fair_value = None
             if order_depth.sell_orders and order_depth.buy_orders:
                 best_ask = min(order_depth.sell_orders.keys())
-                best_ask_volume = order_depth.sell_orders[best_ask] # Negative volume
+                best_ask_volume = order_depth.sell_orders[best_ask]  # Negative
                 best_bid = max(order_depth.buy_orders.keys())
-                best_bid_volume = order_depth.buy_orders[best_bid] # Positive volume
+                best_bid_volume = order_depth.buy_orders[best_bid]   # Positive
 
-                # Ensure volumes are non-zero before calculating WAP
                 if abs(best_ask_volume) > 0 and best_bid_volume > 0:
                     wap = (best_bid * abs(best_ask_volume) + best_ask * best_bid_volume) / (best_bid_volume + abs(best_ask_volume))
                     fair_value = wap
-                elif best_bid_volume > 0: # Only bids have volume
-                    fair_value = best_bid # Use best bid as fair value
-                elif abs(best_ask_volume) > 0: # Only asks have volume
-                    fair_value = best_ask # Use best ask as fair value
-                else: # Neither best bid nor best ask has volume, use midpoint?
-                     fair_value = (best_bid + best_ask) / 2.0
-            elif order_depth.buy_orders: # Only bids exist
-                 best_bid = max(order_depth.buy_orders.keys())
-                 fair_value = best_bid # Use best bid if no asks
-            elif order_depth.sell_orders: # Only asks exist
-                 best_ask = min(order_depth.sell_orders.keys())
-                 fair_value = best_ask # Use best ask if no bids
+                elif best_bid_volume > 0:
+                    fair_value = best_bid
+                elif abs(best_ask_volume) > 0:
+                    fair_value = best_ask
+                else:
+                    fair_value = (best_bid + best_ask) / 2.0
+            elif order_depth.buy_orders:
+                fair_value = max(order_depth.buy_orders.keys())
+            elif order_depth.sell_orders:
+                fair_value = min(order_depth.sell_orders.keys())
 
-            # Proceed only if a fair value could be determined
             if fair_value is not None and position_limit > 0:
-                # Calculate buy and sell prices around the fair value
+                # Calculate buy and sell prices
                 buy_price = math.floor(fair_value - spread / 2)
                 sell_price = math.ceil(fair_value + spread / 2)
 
-                # Get current position and calculate allowable order volumes
+                # Position management
                 current_position = state.position.get(product, 0)
-                buy_volume_allowed = position_limit - current_position  # Max volume we can buy
-                sell_volume_allowed = position_limit + current_position # Max volume we can sell (position is negative when short)
+                buy_volume_allowed = position_limit - current_position
+                sell_volume_allowed = position_limit + current_position
 
-                # Place buy order if allowed volume is positive
+                # Place orders with volume control
                 if buy_volume_allowed > 0:
-                    print(f"PLACING BUY Order for {product}: Price={buy_price}, Volume={buy_volume_allowed}")
-                    orders.append(Order(product, buy_price, buy_volume_allowed))
+                    buy_volume = min(buy_volume_allowed, 10)  # Cap at 10 for safety
+                    print(f"PLACING BUY Order for {product}: Price={buy_price}, Volume={buy_volume}")
+                    orders.append(Order(product, buy_price, buy_volume))
 
-                # Place sell order if allowed volume is positive
                 if sell_volume_allowed > 0:
-                    print(f"PLACING SELL Order for {product}: Price={sell_price}, Volume={-sell_volume_allowed}") # Sell volume must be negative
-                    orders.append(Order(product, sell_price, -sell_volume_allowed))
+                    sell_volume = min(sell_volume_allowed, 10)  # Cap at 10 for safety
+                    print(f"PLACING SELL Order for {product}: Price={sell_price}, Volume={-sell_volume}")
+                    orders.append(Order(product, sell_price, -sell_volume))
 
             result[product] = orders
-
-        # Update traderData if needed for state persistence (e.g., using jsonpickle)
-        # traderData = jsonpickle.encode({}) # Example
 
         return result, conversions, traderData
